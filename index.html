@@ -368,8 +368,34 @@ body {
       <button class="btn btn-danger btn-block" id="btn-clear">Clear all data</button>
     </div>
     <div class="card">
+      <h2>🛰️ Live flight status (optional)</h2>
+      <p class="muted" style="margin-bottom:0.9rem;">Live aircraft position works out of the box via OpenSky Network — no setup needed, just open a flight and tap "Track live position."</p>
+      <p class="muted" style="margin-bottom:0.9rem;">For full live status (scheduled/estimated times, delay minutes, gate) from a provider like AviationStack, add your own free API key below. It's stored only in this browser and sent only to the URL you configure — never to us.</p>
+      <form id="live-status-form">
+        <div class="field">
+          <label for="ls-provider">Provider</label>
+          <select id="ls-provider">
+            <option value="">None (position tracking only)</option>
+            <option value="aviationstack">AviationStack-compatible</option>
+          </select>
+        </div>
+        <div id="ls-fields" class="hidden">
+          <div class="field">
+            <label for="ls-key">API key</label>
+            <input type="text" id="ls-key" placeholder="Your access key" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="ls-base-url">Base URL</label>
+            <input type="text" id="ls-base-url" placeholder="https://api.aviationstack.com/v1/flights" autocomplete="off">
+          </div>
+          <p class="muted" style="margin:-0.4rem 0 0.9rem;">AviationStack's free plan only supports plain HTTP, which browsers block from this HTTPS site. If you're on the free plan, point Base URL at your own HTTPS proxy (e.g. a small Vercel function) instead of AviationStack directly.</p>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Save provider settings</button>
+      </form>
+    </div>
+    <div class="card">
       <h2>📶 About the data sources</h2>
-      <p class="muted">Flight details are entered by you. Weather and delay-risk info comes live from Open-Meteo (no account needed). Delay reason categories follow the US DOT / BTS classification (Air Carrier, Extreme Weather, National Aviation System, Late-Arriving Aircraft, Security).</p>
+      <p class="muted">Flight details are entered by you. Weather and delay-risk info comes live from Open-Meteo (no account needed). Live position comes from OpenSky Network (no account needed). Delay reason categories follow the US DOT / BTS classification (Air Carrier, Extreme Weather, National Aviation System, Late-Arriving Aircraft, Security).</p>
     </div>
     <div class="card">
       <h2>📱 Add to your home screen</h2>
@@ -534,6 +560,23 @@ const AIRPORT_NOTES = {
   BOS: "Coastal fog and Nor'easters (winter) are notable delay factors.",
 };
 
+/* IATA -> ICAO airline code, used to build an OpenSky callsign (e.g. UA 523 -> UAL523) */
+const AIRLINE_ICAO = {
+  AA:"AAL", UA:"UAL", DL:"DAL", WN:"SWA", B6:"JBU", AS:"ASA", F9:"FFT", NK:"NKS", G4:"AAY", HA:"HAL", SY:"SCX",
+  BA:"BAW", VS:"VIR", LH:"DLH", LX:"SWR", OS:"AUA", SN:"BEL", AF:"AFR", KL:"KLM", IB:"IBE", UX:"AEA",
+  TP:"TAP", AZ:"ITY", LO:"LOT", SK:"SAS", AY:"FIN", EI:"EIN", TK:"THY", LY:"ELY", PC:"PGT", FR:"RYR", U2:"EZY",
+  EK:"UAE", EY:"ETD", QR:"QTR", SV:"SVA", GF:"GFA", WY:"OMA",
+  SQ:"SIA", CX:"CPA", JL:"JAL", NH:"ANA", KE:"KAL", OZ:"AAR", CA:"CCA", MU:"CES", CZ:"CSN", TG:"THA",
+  MH:"MAS", GA:"GIA", AI:"AIC", VN:"HVN", PR:"PAL",
+  QF:"QFA", VA:"VOZ", NZ:"ANZ", JQ:"JST",
+  AC:"ACA", WS:"WJA",
+  AM:"AMX", AV:"AVA", LA:"LAN", G3:"GLO", AD:"AZU", CM:"CMP",
+  ET:"ETH", MS:"MSR", SA:"SAA", KQ:"KQA",
+};
+
+/* App settings (live-status provider config), separate from flight data */
+const DEFAULT_SETTINGS = { lsProvider: "", lsApiKey: "", lsBaseUrl: "" };
+
 /* ============================================================
    STATE
    ============================================================ */
@@ -542,9 +585,13 @@ let state = loadState();
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      parsed.settings = Object.assign({}, DEFAULT_SETTINGS, parsed.settings || {});
+      return parsed;
+    }
   } catch(e) {}
-  return { flights: [] };
+  return { flights: [], settings: Object.assign({}, DEFAULT_SETTINGS) };
 }
 function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
 function uid() { return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -677,6 +724,74 @@ function riskReasonText(w) {
   if (w.gust && w.gust >= 35) bits.push(`gusts ${Math.round(w.gust)} mph`);
   if (w.visibility !== null && w.visibility < 4800) bits.push(`low visibility (${(w.visibility/1609).toFixed(1)} mi)`);
   return bits.join(', ');
+}
+
+/* ============================================================
+   LIVE FLIGHT DATA
+   — position via OpenSky Network (free, keyless, works now)
+   — full status via an optional user-configured AviationStack-
+     compatible provider (Settings tab)
+   ============================================================ */
+function parseFlightNumber(flightNumberRaw) {
+  const m = (flightNumberRaw || '').trim().toUpperCase().match(/^([A-Z0-9]{2,3})[\s-]*(\d{1,4}[A-Z]?)$/);
+  if (!m) return null;
+  return { carrier: m[1], number: m[2] };
+}
+
+let openSkyCache = { time: 0, states: null };
+async function fetchOpenSkyStates() {
+  const now = Date.now();
+  if (openSkyCache.states && (now - openSkyCache.time) < 25000) return openSkyCache.states;
+  const res = await fetch('https://opensky-network.org/api/states/all');
+  if (!res.ok) throw new Error('bad status ' + res.status);
+  const data = await res.json();
+  openSkyCache = { time: now, states: data.states || [] };
+  return openSkyCache.states;
+}
+
+async function fetchLivePosition(flight) {
+  const parsed = parseFlightNumber(flight.flightNumber);
+  if (!parsed) return { error: true, reason: `Couldn't read an airline code + number from "${flight.flightNumber}".` };
+  const icaoPrefix = AIRLINE_ICAO[parsed.carrier];
+  if (!icaoPrefix) return { error: true, reason: `No ICAO callsign mapping for airline code "${parsed.carrier}" yet.` };
+  const targetCallsign = (icaoPrefix + parsed.number).toUpperCase();
+  try {
+    const states = await fetchOpenSkyStates();
+    const match = states.find(s => (s[1] || '').trim().toUpperCase() === targetCallsign);
+    if (!match) return { notFound: true, callsign: targetCallsign };
+    return {
+      callsign: targetCallsign,
+      lat: match[6], lon: match[5],
+      altitudeFt: match[7] !== null && match[7] !== undefined ? Math.round(match[7] * 3.28084) : null,
+      speedMph: match[9] !== null && match[9] !== undefined ? Math.round(match[9] * 2.23694) : null,
+      heading: match[10],
+      onGround: match[8],
+      country: match[2],
+      lastContact: match[4],
+    };
+  } catch (e) {
+    return { error: true, reason: 'Could not reach OpenSky Network (it may be rate-limiting anonymous requests — try again shortly).' };
+  }
+}
+
+async function fetchLiveStatus(flight) {
+  const settings = state.settings;
+  if (!settings.lsProvider) return { unconfigured: true };
+  const parsed = parseFlightNumber(flight.flightNumber);
+  if (!parsed) return { error: true, reason: `Couldn't read an airline code + number from "${flight.flightNumber}".` };
+  const base = (settings.lsBaseUrl || 'https://api.aviationstack.com/v1/flights').replace(/\/$/, '');
+  const params = new URLSearchParams({ access_key: settings.lsApiKey || '', flight_iata: parsed.carrier + parsed.number });
+  try {
+    const res = await fetch(`${base}?${params.toString()}`);
+    if (!res.ok) throw new Error('bad status ' + res.status);
+    const data = await res.json();
+    if (data.error) return { error: true, reason: data.error.message || 'The provider returned an error.' };
+    const entry = (data.data || [])[0];
+    if (!entry) return { notFound: true };
+    return { raw: entry };
+  } catch (e) {
+    return { error: true, reason: 'Could not reach the live status provider — check your API key/Base URL, and note free HTTP-only plans get blocked from this HTTPS site.' };
+  }
 }
 
 /* ============================================================
@@ -948,6 +1063,17 @@ function renderDetail(flight, wOrigin, wDest) {
     </div>
 
     <div class="card">
+      <h2>🛰️ Live tracking</h2>
+      <div class="form-actions" style="margin-top:0;">
+        <button class="btn btn-secondary" id="btn-track-position">Track live position</button>
+        ${state.settings.lsProvider ? '<button class="btn btn-secondary" id="btn-fetch-status">Fetch live status</button>' : ''}
+      </div>
+      <div id="live-position-result"></div>
+      <div id="live-status-result"></div>
+      ${!state.settings.lsProvider ? '<p class="muted" style="margin-top:0.7rem;">Live position works now via OpenSky Network (best while the aircraft is airborne). For full scheduled/delay status, add a provider under Settings.</p>' : ''}
+    </div>
+
+    <div class="card">
       <h2>🛫 Origin — ${o ? o.city : flight.originIata}</h2>
       <div class="airport-block">
         <div>
@@ -974,6 +1100,10 @@ function renderDetail(flight, wOrigin, wDest) {
     </div>
   `;
 
+  document.getElementById('btn-track-position').addEventListener('click', () => trackLivePosition(flight));
+  const statusBtn = document.getElementById('btn-fetch-status');
+  if (statusBtn) statusBtn.addEventListener('click', () => fetchAndShowLiveStatus(flight));
+
   document.getElementById('btn-edit-flight').addEventListener('click', () => openForm(flight));
   document.getElementById('btn-delete-flight').addEventListener('click', () => {
     if (confirm('Delete this flight?')) {
@@ -983,6 +1113,68 @@ function renderDetail(flight, wOrigin, wDest) {
       renderFlightList();
       goToScreen('list');
     }
+  });
+}
+
+async function trackLivePosition(flight) {
+  document.getElementById('live-position-result').innerHTML = '<p class="muted" style="margin-top:0.7rem;">⏳ Looking up live position via OpenSky…</p>';
+  const pos = await fetchLivePosition(flight);
+  const container = document.getElementById('live-position-result');
+  if (!container) return;
+  if (pos.error) {
+    container.innerHTML = `<div class="note-tip" style="margin-top:0.7rem;">⚠️ ${pos.reason}</div>`;
+  } else if (pos.notFound) {
+    container.innerHTML = `<p class="muted" style="margin-top:0.7rem;">No live position found for callsign <strong>${pos.callsign}</strong> right now — the aircraft may not be airborne, or ADS-B coverage may be missing here.</p>`;
+  } else {
+    const mapUrl = `https://www.google.com/maps?q=${pos.lat},${pos.lon}`;
+    container.innerHTML = `
+      <div class="weather-row">
+        <div class="w-icon">${pos.onGround ? '🛬' : '✈️'}</div>
+        <div class="w-detail">
+          <span class="w-desc">${pos.onGround ? 'On the ground' : 'In the air'}${pos.altitudeFt !== null ? ' · ' + pos.altitudeFt.toLocaleString() + ' ft' : ''}</span>
+          <div class="muted">${pos.speedMph !== null ? pos.speedMph + ' mph' : ''}${pos.heading !== null && pos.heading !== undefined ? ' · heading ' + Math.round(pos.heading) + '°' : ''} · callsign ${pos.callsign}</div>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:0.4rem;">Last position ${pos.lat.toFixed(2)}, ${pos.lon.toFixed(2)} · <a href="${mapUrl}" target="_blank" rel="noopener" style="color:var(--primary); font-weight:700;">View on map ↗</a></p>
+    `;
+  }
+}
+
+async function fetchAndShowLiveStatus(flight) {
+  document.getElementById('live-status-result').innerHTML = '<p class="muted" style="margin-top:0.7rem;">⏳ Fetching live status…</p>';
+  const result = await fetchLiveStatus(flight);
+  const container = document.getElementById('live-status-result');
+  if (!container) return;
+  if (result.unconfigured) { container.innerHTML = ''; return; }
+  if (result.error) {
+    container.innerHTML = `<div class="note-tip" style="margin-top:0.7rem;">⚠️ ${result.reason}</div>`;
+    return;
+  }
+  if (result.notFound) {
+    container.innerHTML = `<p class="muted" style="margin-top:0.7rem;">No live status found for this flight from your provider.</p>`;
+    return;
+  }
+  const e = result.raw;
+  const dep = e.departure || {}, arr = e.arrival || {};
+  container.innerHTML = `
+    <div class="note-tip" style="margin-top:0.7rem;">
+      <strong>Status: ${e.flight_status || 'unknown'}</strong><br>
+      Departure: ${dep.scheduled ? fmtDT(dep.scheduled) : '—'} scheduled${dep.actual ? ', actual ' + fmtDT(dep.actual) : dep.estimated ? ', est. ' + fmtDT(dep.estimated) : ''}${dep.delay ? ` (${dep.delay}m delay)` : ''}${dep.gate ? ' · Gate ' + dep.gate : ''}<br>
+      Arrival: ${arr.scheduled ? fmtDT(arr.scheduled) : '—'} scheduled${arr.actual ? ', actual ' + fmtDT(arr.actual) : arr.estimated ? ', est. ' + fmtDT(arr.estimated) : ''}${arr.delay ? ` (${arr.delay}m delay)` : ''}${arr.gate ? ' · Gate ' + arr.gate : ''}
+    </div>
+    <button class="btn btn-secondary btn-block" id="btn-apply-live-status" style="margin-top:0.6rem;">Apply to this flight</button>
+  `;
+  document.getElementById('btn-apply-live-status').addEventListener('click', () => {
+    if (dep.actual) flight.actualDep = dep.actual.slice(0,16);
+    if (arr.actual) flight.actualArr = arr.actual.slice(0,16);
+    if (e.flight_status === 'landed') flight.status = 'landed';
+    else if (e.flight_status === 'cancelled') flight.status = 'cancelled';
+    const idx = state.flights.findIndex(f => f.id === flight.id);
+    if (idx >= 0) state.flights[idx] = flight;
+    saveState();
+    toast('Applied live status to flight');
+    renderFlightList();
+    openDetail(flight.id);
   });
 }
 
@@ -1132,9 +1324,11 @@ document.getElementById('import-file').addEventListener('change', (e) => {
     try {
       const imported = JSON.parse(reader.result);
       if (!imported.flights || !Array.isArray(imported.flights)) throw new Error('bad format');
+      imported.settings = Object.assign({}, DEFAULT_SETTINGS, imported.settings || {});
       state = imported;
       saveState();
       renderFlightList();
+      populateLiveStatusForm();
       toast('Import complete');
     } catch (err) {
       toast('Could not import — invalid file');
@@ -1144,22 +1338,44 @@ document.getElementById('import-file').addEventListener('change', (e) => {
   e.target.value = '';
 });
 document.getElementById('btn-clear').addEventListener('click', () => {
-  if (confirm('This will permanently delete all logged flights. Continue?')) {
-    state = { flights: [] };
+  if (confirm('This will permanently delete all logged flights and provider settings. Continue?')) {
+    state = { flights: [], settings: Object.assign({}, DEFAULT_SETTINGS) };
     saveState();
     renderFlightList();
+    populateLiveStatusForm();
     toast('All data cleared');
   }
 });
 document.getElementById('btn-refresh-header').addEventListener('click', () => {
   Object.keys(weatherCache).forEach(k => delete weatherCache[k]);
-  toast('Weather cache cleared — reopen a flight to refresh');
+  openSkyCache = { time: 0, states: null };
+  toast('Live data cache cleared — reopen a flight to refresh');
+});
+
+/* ── Live status provider settings ── */
+function populateLiveStatusForm() {
+  document.getElementById('ls-provider').value = state.settings.lsProvider || '';
+  document.getElementById('ls-key').value = state.settings.lsApiKey || '';
+  document.getElementById('ls-base-url').value = state.settings.lsBaseUrl || '';
+  document.getElementById('ls-fields').classList.toggle('hidden', !state.settings.lsProvider);
+}
+document.getElementById('ls-provider').addEventListener('change', (e) => {
+  document.getElementById('ls-fields').classList.toggle('hidden', !e.target.value);
+});
+document.getElementById('live-status-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  state.settings.lsProvider = document.getElementById('ls-provider').value;
+  state.settings.lsApiKey = document.getElementById('ls-key').value.trim();
+  state.settings.lsBaseUrl = document.getElementById('ls-base-url').value.trim();
+  saveState();
+  toast('Provider settings saved');
 });
 
 /* ============================================================
    INIT
    ============================================================ */
 renderFlightList();
+populateLiveStatusForm();
 </script>
 </body>
 </html>
