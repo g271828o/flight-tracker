@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0f2f4f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flights">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+<title>✈️ Flight Tracker</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+:root {
+  --bg: #f2f6fa;
+  --primary: #0f6bad;
+  --primary-dark: #0a4d80;
+  --secondary: #2fa885;
+  --accent: #f0a828;
+  --danger: #d4523f;
+  --text: #1c2b3a;
+  --text-light: #6b7c8c;
+  --card: #fff;
+  --border: #dde6ee;
+  --shadow: 0 2px 12px rgba(15,50,80,0.08);
+  --radius: 14px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { overscroll-behavior-y: contain; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding-bottom: calc(64px + var(--safe-bottom));
+}
+
+/* ── Header ── */
+.app-header {
+  background: linear-gradient(135deg, #0f6bad 0%, #0a3f66 100%);
+  color: #fff;
+  padding: 1.4rem 1.2rem 1.2rem;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+}
+.app-header .header-row { display: flex; align-items: center; justify-content: space-between; }
+.app-header h1 { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.5px; display: flex; align-items: center; gap: 0.4rem; }
+.app-header .subtitle { margin-top: 0.15rem; opacity: 0.8; font-size: 0.82rem; }
+.header-btn {
+  background: rgba(255,255,255,0.15); border: none; color: #fff;
+  width: 34px; height: 34px; border-radius: 50%; font-size: 1.1rem; cursor: pointer;
+}
+
+/* ── Main ── */
+.app-main { max-width: 640px; margin: 0 auto; padding: 1rem 0.9rem 1.5rem; }
+.section { display: none; }
+.section.active { display: block; }
+.screen { display: none; }
+.screen.active { display: block; }
+
+/* ── Cards ── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow);
+}
+.card h2 { font-size: 1rem; color: var(--primary-dark); margin-bottom: 0.7rem; display:flex; align-items:center; gap:0.4rem; }
+.card h3 { font-size: 0.92rem; color: var(--text); margin-bottom: 0.5rem; }
+.muted { color: var(--text-light); font-size: 0.85rem; }
+.empty-state { text-align: center; padding: 2.5rem 1rem; color: var(--text-light); }
+.empty-state .big { font-size: 2.6rem; margin-bottom: 0.6rem; }
+
+/* ── Flight list ── */
+.flight-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--primary);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.7rem;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.flight-card:active { transform: scale(0.98); }
+.flight-card.status-landed { border-left-color: var(--secondary); }
+.flight-card.status-cancelled { border-left-color: var(--danger); opacity: 0.75; }
+.flight-card .fc-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 0.35rem; }
+.flight-card .fc-num { font-weight: 800; font-size: 1.02rem; }
+.flight-card .fc-date { font-size: 0.78rem; color: var(--text-light); }
+.flight-card .fc-route { display: flex; align-items: center; gap: 0.5rem; font-size: 1.05rem; font-weight: 700; color: var(--primary-dark); }
+.flight-card .fc-route .arrow { color: var(--text-light); font-weight: 400; }
+.flight-card .fc-sub { margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-light); display:flex; justify-content: space-between; }
+.badge { display:inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+.badge-ontime { background: #e2f5ec; color: var(--secondary); }
+.badge-delay-minor { background: #fdf1da; color: #a9750f; }
+.badge-delay-major { background: #fbe3df; color: var(--danger); }
+.badge-upcoming { background: #e3edf7; color: var(--primary); }
+.badge-cancelled { background: #f5dfdb; color: var(--danger); }
+
+/* ── Grid ── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+@media (max-width: 420px) { .grid-2 { grid-template-columns: 1fr; } }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; justify-content:center; gap: 0.35rem;
+  padding: 0.65rem 1.1rem; border: none; border-radius: 10px;
+  cursor: pointer; font-size: 0.9rem; font-weight: 700; transition: all 0.15s;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:active { background: var(--primary-dark); }
+.btn-secondary { background: #eaf1f7; color: var(--primary-dark); }
+.btn-danger { background: #fbe3df; color: var(--danger); }
+.btn-block { width: 100%; }
+.btn-ghost { background: none; color: var(--primary); padding: 0.5rem; }
+.fab {
+  position: fixed; right: 1.1rem; bottom: calc(78px + var(--safe-bottom));
+  width: 56px; height: 56px; border-radius: 50%; background: var(--accent);
+  color: #fff; font-size: 1.6rem; border: none; box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  cursor: pointer; z-index: 40;
+}
+
+/* ── Forms ── */
+.field { margin-bottom: 0.9rem; position: relative; }
+.field label { display: block; font-size: 0.8rem; font-weight: 700; color: var(--text-light); margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.03em; }
+.field input, .field select, .field textarea {
+  width: 100%; padding: 0.65rem 0.75rem; border: 1.5px solid var(--border); border-radius: 10px;
+  font-size: 0.95rem; font-family: inherit; background: #fff; color: var(--text);
+}
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--primary); }
+.field textarea { resize: vertical; min-height: 60px; }
+.field-row { display: flex; gap: 0.7rem; }
+.field-row .field { flex: 1; }
+.autocomplete-drop {
+  position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1.5px solid var(--border);
+  border-radius: 10px; margin-top: 3px; max-height: 220px; overflow-y: auto; z-index: 60;
+  box-shadow: var(--shadow); display: none;
+}
+.autocomplete-drop.show { display: block; }
+.autocomplete-drop div { padding: 0.55rem 0.75rem; font-size: 0.88rem; cursor: pointer; border-bottom: 1px solid var(--border); }
+.autocomplete-drop div:last-child { border-bottom: none; }
+.autocomplete-drop div:active, .autocomplete-drop div.hl { background: var(--bg); }
+.autocomplete-drop div small { display: block; color: var(--text-light); }
+.form-actions { display: flex; gap: 0.6rem; margin-top: 1.1rem; }
+.form-actions .btn { flex: 1; }
+
+/* ── Airport info ── */
+.airport-block { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.airport-block .ab-name { font-weight: 800; font-size: 1rem; }
+.airport-block .ab-loc { font-size: 0.82rem; color: var(--text-light); }
+.airport-block .ab-code { font-size: 1.6rem; font-weight: 900; color: var(--primary); }
+.weather-row { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px dashed var(--border); }
+.weather-row .w-icon { font-size: 1.8rem; }
+.weather-row .w-detail { flex: 1; font-size: 0.85rem; }
+.weather-row .w-detail .w-desc { font-weight: 700; }
+.risk-pill { padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; }
+.risk-low { background: #e2f5ec; color: var(--secondary); }
+.risk-moderate { background: #fdf1da; color: #a9750f; }
+.risk-high { background: #fbe3df; color: var(--danger); }
+.note-tip { background: #eaf4ff; border-left: 4px solid var(--primary); border-radius: 8px; padding: 0.6rem 0.8rem; font-size: 0.82rem; margin-top: 0.7rem; color: var(--primary-dark); }
+
+/* ── Timeline ── */
+.timeline { display: flex; align-items: center; margin: 0.9rem 0; }
+.timeline .tl-point { text-align: center; flex: 0 0 auto; }
+.timeline .tl-point .tl-code { font-weight: 800; font-size: 1.1rem; }
+.timeline .tl-point .tl-time { font-size: 0.75rem; color: var(--text-light); }
+.timeline .tl-line { flex: 1; height: 2px; background: var(--border); position: relative; margin: 0 0.5rem; }
+.timeline .tl-line::after { content: '✈'; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: var(--bg); color: var(--primary); padding: 0 4px; font-size: 0.9rem; }
+.delay-line { font-size: 0.78rem; margin-top: 0.15rem; font-weight: 700; }
+.delay-line.late { color: var(--danger); }
+.delay-line.ontime { color: var(--secondary); }
+
+/* ── Stats ── */
+.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; margin-bottom: 1rem; }
+.stat-tile { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 0.8rem 0.5rem; text-align: center; box-shadow: var(--shadow); }
+.stat-tile .st-val { font-size: 1.35rem; font-weight: 900; color: var(--primary-dark); }
+.stat-tile .st-label { font-size: 0.68rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.03em; margin-top: 0.15rem; }
+#chart-delays, #chart-reasons { width: 100%; overflow-x: auto; }
+.bar-label { font-size: 10px; fill: var(--text-light); }
+.bar-value { font-size: 10px; fill: var(--text); font-weight: 700; }
+
+/* ── Bottom Nav ── */
+.app-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; background: #fff;
+  border-top: 1px solid var(--border); display: flex; z-index: 100;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.06);
+  padding-bottom: var(--safe-bottom);
+}
+.app-nav button {
+  flex: 1; padding: 0.6rem 0.2rem 0.5rem; border: none; background: none; cursor: pointer;
+  color: var(--text-light); display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+  font-size: 0.68rem; font-weight: 700;
+}
+.app-nav button .nav-icon { font-size: 1.25rem; }
+.app-nav button.active { color: var(--primary); }
+
+/* ── Misc ── */
+.hidden { display: none !important; }
+.link-btn { background:none; border:none; color: var(--primary); font-weight: 700; cursor: pointer; font-size: 0.85rem; padding: 0.3rem 0; }
+.toast {
+  position: fixed; bottom: calc(78px + var(--safe-bottom)); left: 50%; transform: translateX(-50%);
+  background: #1c2b3a; color: #fff; padding: 0.6rem 1.1rem; border-radius: 10px; font-size: 0.85rem;
+  z-index: 200; opacity: 0; transition: opacity 0.25s; pointer-events: none;
+}
+.toast.show { opacity: 0.95; }
+.reason-legend { font-size: 0.75rem; color: var(--text-light); margin-top: 0.4rem; }
+.filter-tabs { display: flex; gap: 0.4rem; margin-bottom: 0.9rem; overflow-x: auto; }
+.filter-tabs button {
+  flex: 0 0 auto; padding: 0.4rem 0.85rem; border-radius: 999px; border: 1.5px solid var(--border);
+  background: #fff; color: var(--text-light); font-size: 0.8rem; font-weight: 700; cursor: pointer;
+}
+.filter-tabs button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-row">
+    <div>
+      <h1>✈️ Flight Tracker</h1>
+      <div class="subtitle">Flights, delays &amp; airport conditions</div>
+    </div>
+    <button class="header-btn" id="btn-refresh-header" title="Refresh weather">⟳</button>
+  </div>
+</header>
+
+<main class="app-main">
+
+  <!-- ── FLIGHTS SECTION ── -->
+  <section class="section active" id="section-flights">
+
+    <div class="screen active" id="screen-list">
+      <div class="filter-tabs" id="filter-tabs">
+        <button data-filter="upcoming" class="active">Upcoming</button>
+        <button data-filter="past">Past</button>
+        <button data-filter="all">All</button>
+      </div>
+      <div id="flight-list"></div>
+    </div>
+
+    <div class="screen" id="screen-form">
+      <div class="card">
+        <h2 id="form-title">Add Flight</h2>
+        <form id="flight-form">
+          <input type="hidden" id="f-id">
+          <div class="field-row">
+            <div class="field">
+              <label for="f-airline">Airline</label>
+              <input type="text" id="f-airline" placeholder="e.g. United" required>
+            </div>
+            <div class="field">
+              <label for="f-flightnum">Flight #</label>
+              <input type="text" id="f-flightnum" placeholder="e.g. UA 523" required>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="f-origin">Origin airport</label>
+            <input type="text" id="f-origin" placeholder="Search city or IATA code" autocomplete="off" required>
+            <div class="autocomplete-drop" id="f-origin-drop"></div>
+          </div>
+          <div class="field">
+            <label for="f-dest">Destination airport</label>
+            <input type="text" id="f-dest" placeholder="Search city or IATA code" autocomplete="off" required>
+            <div class="autocomplete-drop" id="f-dest-drop"></div>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="f-sched-dep">Scheduled departure</label>
+              <input type="datetime-local" id="f-sched-dep" required>
+            </div>
+            <div class="field">
+              <label for="f-sched-arr">Scheduled arrival</label>
+              <input type="datetime-local" id="f-sched-arr" required>
+            </div>
+          </div>
+          <div class="muted" style="margin:-0.4rem 0 0.9rem;">Times are local to each airport.</div>
+
+          <div class="field">
+            <label for="f-status">Status</label>
+            <select id="f-status">
+              <option value="upcoming">Upcoming</option>
+              <option value="landed">Landed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div id="actuals-block">
+            <div class="field-row">
+              <div class="field">
+                <label for="f-actual-dep">Actual departure</label>
+                <input type="datetime-local" id="f-actual-dep">
+              </div>
+              <div class="field">
+                <label for="f-actual-arr">Actual arrival</label>
+                <input type="datetime-local" id="f-actual-arr">
+              </div>
+            </div>
+            <div class="field">
+              <label for="f-reason">Delay / cancellation reason</label>
+              <select id="f-reason">
+                <option value="">— none logged —</option>
+                <option value="carrier">Air Carrier (maintenance, crew, cleaning)</option>
+                <option value="weather">Extreme Weather</option>
+                <option value="nas">National Aviation System (ATC, congestion, non-extreme weather)</option>
+                <option value="late_aircraft">Late-Arriving Aircraft</option>
+                <option value="security">Security</option>
+                <option value="other">Other / Unknown</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="f-notes">Notes</label>
+            <textarea id="f-notes" placeholder="Gate, seat, confirmation #, anything else..."></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" id="btn-cancel-form">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Flight</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="screen" id="screen-detail">
+      <button class="link-btn" id="btn-back-detail">‹ Back to flights</button>
+      <div id="detail-content"></div>
+    </div>
+
+    <button class="fab" id="btn-add-flight" title="Add flight">+</button>
+  </section>
+
+  <!-- ── AIRPORTS SECTION ── -->
+  <section class="section" id="section-airports">
+    <div class="card">
+      <h2>🔎 Look up an airport</h2>
+      <div class="field" style="margin-bottom:0;">
+        <input type="text" id="airport-search" placeholder="Search by city, name, or IATA code" autocomplete="off">
+        <div class="autocomplete-drop" id="airport-search-drop"></div>
+      </div>
+    </div>
+    <div id="airport-lookup-result"></div>
+  </section>
+
+  <!-- ── STATS SECTION ── -->
+  <section class="section" id="section-stats">
+    <div id="stats-content"></div>
+  </section>
+
+  <!-- ── SETTINGS SECTION ── -->
+  <section class="section" id="section-settings">
+    <div class="card">
+      <h2>💾 Your data</h2>
+      <p class="muted" style="margin-bottom:0.9rem;">Everything is stored only on this device (browser local storage). Back up or move your flight log using export / import.</p>
+      <button class="btn btn-secondary btn-block" id="btn-export" style="margin-bottom:0.6rem;">Export flights (.json)</button>
+      <button class="btn btn-secondary btn-block" id="btn-import" style="margin-bottom:0.6rem;">Import flights (.json)</button>
+      <input type="file" id="import-file" accept="application/json" class="hidden">
+      <button class="btn btn-danger btn-block" id="btn-clear">Clear all data</button>
+    </div>
+    <div class="card">
+      <h2>📶 About the data sources</h2>
+      <p class="muted">Flight details are entered by you. Weather and delay-risk info comes live from Open-Meteo (no account needed). Delay reason categories follow the US DOT / BTS classification (Air Carrier, Extreme Weather, National Aviation System, Late-Arriving Aircraft, Security).</p>
+    </div>
+    <div class="card">
+      <h2>📱 Add to your home screen</h2>
+      <p class="muted">Open this page in your phone's browser, then use "Add to Home Screen" (Safari: Share → Add to Home Screen; Chrome: ⋮ menu → Add to Home screen) to use it like an app.</p>
+    </div>
+  </section>
+
+</main>
+
+<nav class="app-nav" id="app-nav">
+  <button data-section="flights" class="active"><span class="nav-icon">🛫</span>Flights</button>
+  <button data-section="airports"><span class="nav-icon">🌍</span>Airports</button>
+  <button data-section="stats"><span class="nav-icon">📊</span>Stats</button>
+  <button data-section="settings"><span class="nav-icon">⚙️</span>Settings</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   AIRPORT DATABASE (IATA, name, city, country, lat, lon, IANA tz)
+   ============================================================ */
+const AIRPORTS = [
+["ATL","Hartsfield-Jackson Atlanta Intl","Atlanta","USA",33.6407,-84.4277,"America/New_York"],
+["LAX","Los Angeles Intl","Los Angeles","USA",33.9416,-118.4085,"America/Los_Angeles"],
+["ORD","Chicago O'Hare Intl","Chicago","USA",41.9742,-87.9073,"America/Chicago"],
+["DFW","Dallas/Fort Worth Intl","Dallas","USA",32.8998,-97.0403,"America/Chicago"],
+["DEN","Denver Intl","Denver","USA",39.8561,-104.6737,"America/Denver"],
+["JFK","John F. Kennedy Intl","New York","USA",40.6413,-73.7781,"America/New_York"],
+["LGA","LaGuardia","New York","USA",40.7769,-73.8740,"America/New_York"],
+["EWR","Newark Liberty Intl","Newark","USA",40.6895,-74.1745,"America/New_York"],
+["SFO","San Francisco Intl","San Francisco","USA",37.6213,-122.3790,"America/Los_Angeles"],
+["SEA","Seattle-Tacoma Intl","Seattle","USA",47.4502,-122.3088,"America/Los_Angeles"],
+["MCO","Orlando Intl","Orlando","USA",28.4312,-81.3081,"America/New_York"],
+["MIA","Miami Intl","Miami","USA",25.7959,-80.2870,"America/New_York"],
+["PHX","Phoenix Sky Harbor Intl","Phoenix","USA",33.4352,-112.0101,"America/Phoenix"],
+["IAH","George Bush Intercontinental","Houston","USA",29.9902,-95.3368,"America/Chicago"],
+["BOS","Logan Intl","Boston","USA",42.3656,-71.0096,"America/New_York"],
+["CLT","Charlotte Douglas Intl","Charlotte","USA",35.2144,-80.9473,"America/New_York"],
+["MSP","Minneapolis-St Paul Intl","Minneapolis","USA",44.8848,-93.2223,"America/Chicago"],
+["DTW","Detroit Metro","Detroit","USA",42.2124,-83.3534,"America/New_York"],
+["PHL","Philadelphia Intl","Philadelphia","USA",39.8744,-75.2424,"America/New_York"],
+["LAS","Harry Reid Intl","Las Vegas","USA",36.0840,-115.1537,"America/Los_Angeles"],
+["SAN","San Diego Intl","San Diego","USA",32.7338,-117.1933,"America/Los_Angeles"],
+["TPA","Tampa Intl","Tampa","USA",27.9755,-82.5332,"America/New_York"],
+["PDX","Portland Intl","Portland","USA",45.5898,-122.5951,"America/Los_Angeles"],
+["STL","St Louis Lambert Intl","St. Louis","USA",38.7487,-90.3700,"America/Chicago"],
+["BWI","Baltimore/Washington Intl","Baltimore","USA",39.1774,-76.6684,"America/New_York"],
+["IAD","Washington Dulles Intl","Washington","USA",38.9531,-77.4565,"America/New_York"],
+["DCA","Ronald Reagan Washington National","Washington","USA",38.8512,-77.0402,"America/New_York"],
+["AUS","Austin-Bergstrom Intl","Austin","USA",30.1975,-97.6664,"America/Chicago"],
+["BNA","Nashville Intl","Nashville","USA",36.1263,-86.6774,"America/Chicago"],
+["SLC","Salt Lake City Intl","Salt Lake City","USA",40.7899,-111.9791,"America/Denver"],
+["HNL","Daniel K. Inouye Intl","Honolulu","USA",21.3245,-157.9251,"Pacific/Honolulu"],
+["FLL","Fort Lauderdale-Hollywood Intl","Fort Lauderdale","USA",26.0726,-80.1527,"America/New_York"],
+["MDW","Chicago Midway Intl","Chicago","USA",41.7868,-87.7522,"America/Chicago"],
+["RDU","Raleigh-Durham Intl","Raleigh","USA",35.8776,-78.7875,"America/New_York"],
+["SJC","San Jose Intl","San Jose","USA",37.3626,-121.9291,"America/Los_Angeles"],
+["OAK","Oakland Intl","Oakland","USA",37.7213,-122.2207,"America/Los_Angeles"],
+["SMF","Sacramento Intl","Sacramento","USA",38.6954,-121.5908,"America/Los_Angeles"],
+["MSY","Louis Armstrong New Orleans Intl","New Orleans","USA",29.9934,-90.2580,"America/Chicago"],
+["PIT","Pittsburgh Intl","Pittsburgh","USA",40.4915,-80.2329,"America/New_York"],
+["CVG","Cincinnati/N. Kentucky Intl","Cincinnati","USA",39.0489,-84.6678,"America/New_York"],
+["YYZ","Toronto Pearson Intl","Toronto","Canada",43.6777,-79.6248,"America/Toronto"],
+["YVR","Vancouver Intl","Vancouver","Canada",49.1947,-123.1792,"America/Vancouver"],
+["YUL","Montreal-Trudeau Intl","Montreal","Canada",45.4706,-73.7408,"America/Toronto"],
+["YYC","Calgary Intl","Calgary","Canada",51.1315,-114.0106,"America/Edmonton"],
+["MEX","Mexico City Intl","Mexico City","Mexico",19.4363,-99.0721,"America/Mexico_City"],
+["CUN","Cancun Intl","Cancun","Mexico",21.0365,-86.8771,"America/Cancun"],
+["LHR","London Heathrow","London","United Kingdom",51.4700,-0.4543,"Europe/London"],
+["LGW","London Gatwick","London","United Kingdom",51.1537,-0.1821,"Europe/London"],
+["MAN","Manchester","Manchester","United Kingdom",53.3537,-2.2750,"Europe/London"],
+["CDG","Paris Charles de Gaulle","Paris","France",49.0097,2.5479,"Europe/Paris"],
+["ORY","Paris Orly","Paris","France",48.7233,2.3794,"Europe/Paris"],
+["AMS","Amsterdam Schiphol","Amsterdam","Netherlands",52.3105,4.7683,"Europe/Amsterdam"],
+["FRA","Frankfurt am Main","Frankfurt","Germany",50.0379,8.5622,"Europe/Berlin"],
+["MUC","Munich","Munich","Germany",48.3538,11.7861,"Europe/Berlin"],
+["BER","Berlin Brandenburg","Berlin","Germany",52.3667,13.5033,"Europe/Berlin"],
+["MAD","Adolfo Suarez Madrid-Barajas","Madrid","Spain",40.4983,-3.5676,"Europe/Madrid"],
+["BCN","Barcelona-El Prat","Barcelona","Spain",41.2971,2.0785,"Europe/Madrid"],
+["FCO","Rome Fiumicino","Rome","Italy",41.8003,12.2389,"Europe/Rome"],
+["MXP","Milan Malpensa","Milan","Italy",45.6306,8.7281,"Europe/Rome"],
+["ZRH","Zurich","Zurich","Switzerland",47.4647,8.5492,"Europe/Zurich"],
+["GVA","Geneva","Geneva","Switzerland",46.2381,6.1090,"Europe/Zurich"],
+["VIE","Vienna Intl","Vienna","Austria",48.1103,16.5697,"Europe/Vienna"],
+["CPH","Copenhagen","Copenhagen","Denmark",55.6180,12.6560,"Europe/Copenhagen"],
+["ARN","Stockholm Arlanda","Stockholm","Sweden",59.6519,17.9186,"Europe/Stockholm"],
+["OSL","Oslo Gardermoen","Oslo","Norway",60.1939,11.1004,"Europe/Oslo"],
+["HEL","Helsinki-Vantaa","Helsinki","Finland",60.3172,24.9633,"Europe/Helsinki"],
+["DUB","Dublin","Dublin","Ireland",53.4213,-6.2701,"Europe/Dublin"],
+["LIS","Lisbon Humberto Delgado","Lisbon","Portugal",38.7813,-9.1359,"Europe/Lisbon"],
+["ATH","Athens Intl","Athens","Greece",37.9364,23.9445,"Europe/Athens"],
+["IST","Istanbul","Istanbul","Turkey",41.2753,28.7519,"Europe/Istanbul"],
+["WAW","Warsaw Chopin","Warsaw","Poland",52.1657,20.9671,"Europe/Warsaw"],
+["PRG","Vaclav Havel Prague","Prague","Czechia",50.1008,14.2600,"Europe/Prague"],
+["BRU","Brussels","Brussels","Belgium",50.9014,4.4844,"Europe/Brussels"],
+["DXB","Dubai Intl","Dubai","UAE",25.2532,55.3657,"Asia/Dubai"],
+["AUH","Abu Dhabi Intl","Abu Dhabi","UAE",24.4330,54.6511,"Asia/Dubai"],
+["DOH","Hamad Intl","Doha","Qatar",25.2731,51.6081,"Asia/Qatar"],
+["SIN","Singapore Changi","Singapore","Singapore",1.3644,103.9915,"Asia/Singapore"],
+["HKG","Hong Kong Intl","Hong Kong","Hong Kong",22.3080,113.9185,"Asia/Hong_Kong"],
+["NRT","Narita Intl","Tokyo","Japan",35.7720,140.3929,"Asia/Tokyo"],
+["HND","Haneda","Tokyo","Japan",35.5494,139.7798,"Asia/Tokyo"],
+["KIX","Kansai Intl","Osaka","Japan",34.4347,135.2441,"Asia/Tokyo"],
+["ICN","Incheon Intl","Seoul","South Korea",37.4602,126.4407,"Asia/Seoul"],
+["PEK","Beijing Capital Intl","Beijing","China",40.0799,116.6031,"Asia/Shanghai"],
+["PVG","Shanghai Pudong Intl","Shanghai","China",31.1443,121.8083,"Asia/Shanghai"],
+["CAN","Guangzhou Baiyun Intl","Guangzhou","China",23.3959,113.3080,"Asia/Shanghai"],
+["TPE","Taiwan Taoyuan Intl","Taipei","Taiwan",25.0777,121.2328,"Asia/Taipei"],
+["BKK","Suvarnabhumi","Bangkok","Thailand",13.6900,100.7501,"Asia/Bangkok"],
+["KUL","Kuala Lumpur Intl","Kuala Lumpur","Malaysia",2.7456,101.7099,"Asia/Kuala_Lumpur"],
+["CGK","Soekarno-Hatta Intl","Jakarta","Indonesia",-6.1256,106.6559,"Asia/Jakarta"],
+["MNL","Ninoy Aquino Intl","Manila","Philippines",14.5086,121.0198,"Asia/Manila"],
+["DEL","Indira Gandhi Intl","Delhi","India",28.5562,77.1000,"Asia/Kolkata"],
+["BOM","Chhatrapati Shivaji Maharaj Intl","Mumbai","India",19.0896,72.8656,"Asia/Kolkata"],
+["BLR","Kempegowda Intl","Bangalore","India",13.1986,77.7066,"Asia/Kolkata"],
+["SYD","Sydney Kingsford Smith","Sydney","Australia",-33.9399,151.1753,"Australia/Sydney"],
+["MEL","Melbourne","Melbourne","Australia",-37.6690,144.8410,"Australia/Melbourne"],
+["BNE","Brisbane","Brisbane","Australia",-27.3842,153.1175,"Australia/Brisbane"],
+["AKL","Auckland","Auckland","New Zealand",-37.0082,174.7850,"Pacific/Auckland"],
+["GRU","Sao Paulo/Guarulhos Intl","Sao Paulo","Brazil",-23.4356,-46.4731,"America/Sao_Paulo"],
+["GIG","Rio de Janeiro/Galeao Intl","Rio de Janeiro","Brazil",-22.8090,-43.2506,"America/Sao_Paulo"],
+["EZE","Ministro Pistarini Intl","Buenos Aires","Argentina",-34.8222,-58.5358,"America/Argentina/Buenos_Aires"],
+["SCL","Arturo Merino Benitez Intl","Santiago","Chile",-33.3930,-70.7858,"America/Santiago"],
+["BOG","El Dorado Intl","Bogota","Colombia",4.7016,-74.1469,"America/Bogota"],
+["LIM","Jorge Chavez Intl","Lima","Peru",-12.0219,-77.1143,"America/Lima"],
+["JNB","O.R. Tambo Intl","Johannesburg","South Africa",-26.1392,28.2460,"Africa/Johannesburg"],
+["CPT","Cape Town Intl","Cape Town","South Africa",-33.9715,18.6021,"Africa/Johannesburg"],
+["CAI","Cairo Intl","Cairo","Egypt",30.1219,31.4056,"Africa/Cairo"],
+["NBO","Jomo Kenyatta Intl","Nairobi","Kenya",-1.3192,36.9278,"Africa/Nairobi"],
+["LOS","Murtala Muhammed Intl","Lagos","Nigeria",6.5774,3.3212,"Africa/Lagos"],
+["TLV","Ben Gurion","Tel Aviv","Israel",32.0055,34.8854,"Asia/Jerusalem"],
+["YYT","St. John's Intl","St. John's","Canada",47.6186,-52.7519,"America/St_Johns"],
+["KEF","Keflavik Intl","Reykjavik","Iceland",63.9850,-22.6056,"Atlantic/Reykjavik"],
+["EDI","Edinburgh","Edinburgh","United Kingdom",55.9500,-3.3725,"Europe/London"],
+["GLA","Glasgow","Glasgow","United Kingdom",55.8719,-4.4331,"Europe/London"],
+["NCE","Nice Cote d'Azur","Nice","France",43.6584,7.2159,"Europe/Paris"],
+["LYS","Lyon-Saint Exupery","Lyon","France",45.7256,5.0811,"Europe/Paris"],
+["VCE","Venice Marco Polo","Venice","Italy",45.5053,12.3519,"Europe/Rome"],
+["NAP","Naples Intl","Naples","Italy",40.8860,14.2908,"Europe/Rome"],
+["AGP","Malaga-Costa del Sol","Malaga","Spain",36.6749,-4.4991,"Europe/Madrid"],
+["PMI","Palma de Mallorca","Palma","Spain",39.5517,2.7388,"Europe/Madrid"],
+];
+const AIRPORT_BY_IATA = {};
+AIRPORTS.forEach(a => AIRPORT_BY_IATA[a[0]] = {
+  iata:a[0], name:a[1], city:a[2], country:a[3], lat:a[4], lon:a[5], tz:a[6]
+});
+
+/* Well-known general characteristics (not live data) shown as a tip only */
+const AIRPORT_NOTES = {
+  ORD: "One of the busiest hubs in the US; congestion and winter weather (snow, de-icing) are frequent delay drivers.",
+  JFK: "High traffic volume and complex airspace; afternoon/evening ATC delays are common.",
+  LGA: "Slot-restricted, compact airport; ripple delays from congestion are common.",
+  EWR: "Shares crowded NY-area airspace; prone to ATC and weather delays.",
+  SFO: "Frequent summer fog can reduce arrival rates and cause ATC-driven delays.",
+  DEN: "Winter snowstorms are a leading cause of ground delays/cancellations.",
+  ATL: "World's busiest airport by traffic; thunderstorms in summer are a major delay factor.",
+  LHR: "Operates near capacity most of the day; any disruption ripples quickly across the schedule.",
+  CDG: "Large hub with frequent ATC strikes/staffing action affecting European air traffic flow.",
+  MIA: "Summer afternoon thunderstorms are a common cause of ground delays.",
+  DFW: "Severe thunderstorms and occasional winter ice events cause ground stops.",
+  BOS: "Coastal fog and Nor'easters (winter) are notable delay factors.",
+};
+
+/* ============================================================
+   STATE
+   ============================================================ */
+const STORAGE_KEY = "flightTracker_v1";
+let state = loadState();
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch(e) {}
+  return { flights: [] };
+}
+function saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function uid() { return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function fmtDT(dtStr) {
+  if (!dtStr) return '—';
+  const d = new Date(dtStr);
+  if (isNaN(d)) return dtStr;
+  return d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+}
+function fmtTime(dtStr) {
+  if (!dtStr) return '—';
+  const d = new Date(dtStr);
+  if (isNaN(d)) return dtStr;
+  return d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+}
+function diffMinutes(schedStr, actualStr) {
+  if (!schedStr || !actualStr) return null;
+  const a = new Date(schedStr), b = new Date(actualStr);
+  if (isNaN(a) || isNaN(b)) return null;
+  return Math.round((b - a) / 60000);
+}
+function delayLabel(mins) {
+  if (mins === null) return '';
+  if (mins <= 0) return 'On time';
+  const h = Math.floor(mins/60), m = mins % 60;
+  return (h>0 ? h+'h ' : '') + m + 'm late';
+}
+function delayBadgeClass(mins) {
+  if (mins === null) return 'badge-upcoming';
+  if (mins <= 15) return 'badge-ontime';
+  if (mins <= 60) return 'badge-delay-minor';
+  return 'badge-delay-major';
+}
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+const REASON_LABELS = {
+  carrier: "Air Carrier", weather: "Extreme Weather", nas: "National Aviation System",
+  late_aircraft: "Late-Arriving Aircraft", security: "Security", other: "Other / Unknown"
+};
+
+/* ============================================================
+   WEATHER (Open-Meteo — free, no API key, CORS enabled)
+   ============================================================ */
+const WEATHER_CODES = {
+  0:["Clear sky","☀️",0], 1:["Mainly clear","🌤️",0], 2:["Partly cloudy","⛅",0], 3:["Overcast","☁️",0],
+  45:["Fog","🌫️",1], 48:["Depositing rime fog","🌫️",1],
+  51:["Light drizzle","🌦️",1], 53:["Drizzle","🌦️",1], 55:["Dense drizzle","🌦️",1],
+  56:["Freezing drizzle","🌧️",2], 57:["Dense freezing drizzle","🌧️",2],
+  61:["Light rain","🌧️",1], 63:["Rain","🌧️",1], 65:["Heavy rain","🌧️",2],
+  66:["Freezing rain","🌨️",2], 67:["Heavy freezing rain","🌨️",2],
+  71:["Light snow","🌨️",1], 73:["Snow","🌨️",2], 75:["Heavy snow","❄️",2], 77:["Snow grains","🌨️",1],
+  80:["Light showers","🌦️",1], 81:["Showers","🌦️",1], 82:["Violent showers","⛈️",2],
+  85:["Snow showers","🌨️",1], 86:["Heavy snow showers","❄️",2],
+  95:["Thunderstorm","⛈️",2], 96:["Thunderstorm w/ hail","⛈️",2], 99:["Severe thunderstorm w/ hail","⛈️",2],
+};
+function weatherInfo(code) { return WEATHER_CODES[code] || ["Unknown","🌡️",0]; }
+
+const weatherCache = {};
+async function fetchWeatherAt(airport, dateStr, timeHHMM) {
+  const cacheKey = `${airport.iata}_${dateStr}_${timeHHMM}`;
+  if (weatherCache[cacheKey]) return weatherCache[cacheKey];
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(dateStr + 'T00:00:00');
+  const isPast = target < today;
+  const daysAhead = Math.ceil((target - today) / 86400000);
+
+  if (!isPast && daysAhead > 15) {
+    return { unavailable: true, reason: `Forecasts open up ~16 days before departure (this flight is ${daysAhead} days out).` };
+  }
+
+  const base = isPast ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
+  const params = new URLSearchParams({
+    latitude: airport.lat, longitude: airport.lon,
+    hourly: 'temperature_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,visibility',
+    timezone: airport.tz,
+    start_date: dateStr, end_date: dateStr,
+    wind_speed_unit: 'mph', temperature_unit: 'fahrenheit', precipitation_unit: 'inch'
+  });
+
+  try {
+    const res = await fetch(`${base}?${params.toString()}`);
+    if (!res.ok) throw new Error('bad response');
+    const data = await res.json();
+    const times = data.hourly.time;
+    const targetTime = `${dateStr}T${timeHHMM}`;
+    let idx = 0, best = Infinity;
+    times.forEach((t, i) => {
+      const diff = Math.abs(new Date(t) - new Date(targetTime));
+      if (diff < best) { best = diff; idx = i; }
+    });
+    const result = {
+      time: times[idx],
+      temp: data.hourly.temperature_2m[idx],
+      code: data.hourly.weather_code[idx],
+      wind: data.hourly.wind_speed_10m[idx],
+      gust: data.hourly.wind_gusts_10m ? data.hourly.wind_gusts_10m[idx] : null,
+      precip: data.hourly.precipitation[idx],
+      visibility: data.hourly.visibility ? data.hourly.visibility[idx] : null,
+    };
+    weatherCache[cacheKey] = result;
+    return result;
+  } catch (e) {
+    return { error: true, reason: 'Could not reach weather service.' };
+  }
+}
+function riskFromWeather(w) {
+  if (!w || w.unavailable || w.error) return null;
+  const [, , sev] = weatherInfo(w.code);
+  let score = sev;
+  if (w.wind >= 35 || (w.gust && w.gust >= 45)) score = Math.max(score, 2);
+  else if (w.wind >= 20) score = Math.max(score, 1);
+  if (w.visibility !== null && w.visibility < 1600) score = Math.max(score, 2);
+  else if (w.visibility !== null && w.visibility < 4800) score = Math.max(score, 1);
+  return score >= 2 ? 'high' : score === 1 ? 'moderate' : 'low';
+}
+function riskReasonText(w) {
+  const bits = [];
+  const [desc] = weatherInfo(w.code);
+  if (weatherInfo(w.code)[2] > 0) bits.push(desc.toLowerCase());
+  if (w.wind >= 20) bits.push(`wind ${Math.round(w.wind)} mph`);
+  if (w.gust && w.gust >= 35) bits.push(`gusts ${Math.round(w.gust)} mph`);
+  if (w.visibility !== null && w.visibility < 4800) bits.push(`low visibility (${(w.visibility/1609).toFixed(1)} mi)`);
+  return bits.join(', ');
+}
+
+/* ============================================================
+   NAVIGATION
+   ============================================================ */
+document.querySelectorAll('#app-nav button').forEach(btn => {
+  btn.addEventListener('click', () => goToSection(btn.dataset.section));
+});
+function goToSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('#app-nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  document.querySelector(`#app-nav button[data-section="${name}"]`).classList.add('active');
+  if (name === 'stats') renderStats();
+}
+function goToScreen(name) {
+  document.querySelectorAll('#section-flights .screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + name).classList.add('active');
+  document.getElementById('btn-add-flight').classList.toggle('hidden', name !== 'list');
+}
+
+/* ============================================================
+   AIRPORT PICKER (custom autocomplete, iOS-friendly)
+   ============================================================ */
+function airportMatches(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return AIRPORTS.filter(a =>
+    a[0].toLowerCase() === q ||
+    a[0].toLowerCase().startsWith(q) ||
+    a[2].toLowerCase().includes(q) ||
+    a[1].toLowerCase().includes(q) ||
+    a[3].toLowerCase().includes(q)
+  ).slice(0, 8);
+}
+function setupAirportPicker(inputEl, dropEl, onSelect) {
+  inputEl.addEventListener('input', () => {
+    const matches = airportMatches(inputEl.value);
+    if (!matches.length) { dropEl.classList.remove('show'); dropEl.innerHTML = ''; return; }
+    dropEl.innerHTML = matches.map(a =>
+      `<div data-iata="${a[0]}"><strong>${a[0]}</strong> — ${a[1]}<small>${a[2]}, ${a[3]}</small></div>`
+    ).join('');
+    dropEl.classList.add('show');
+  });
+  dropEl.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-iata]');
+    if (!row) return;
+    const iata = row.dataset.iata;
+    const a = AIRPORT_BY_IATA[iata];
+    inputEl.value = `${a.iata} — ${a.city}, ${a.country}`;
+    inputEl.dataset.iata = iata;
+    dropEl.classList.remove('show');
+    if (onSelect) onSelect(a);
+  });
+  inputEl.addEventListener('blur', () => setTimeout(() => dropEl.classList.remove('show'), 150));
+  inputEl.addEventListener('focus', () => { if (inputEl.value) inputEl.dispatchEvent(new Event('input')); });
+}
+setupAirportPicker(document.getElementById('f-origin'), document.getElementById('f-origin-drop'));
+setupAirportPicker(document.getElementById('f-dest'), document.getElementById('f-dest-drop'));
+setupAirportPicker(document.getElementById('airport-search'), document.getElementById('airport-search-drop'), (a) => {
+  renderAirportLookup(a);
+});
+
+/* ============================================================
+   FLIGHT FORM
+   ============================================================ */
+document.getElementById('btn-add-flight').addEventListener('click', () => openForm());
+document.getElementById('btn-cancel-form').addEventListener('click', () => goToScreen('list'));
+document.getElementById('f-status').addEventListener('change', updateActualsVisibility);
+
+function updateActualsVisibility() {
+  const status = document.getElementById('f-status').value;
+  document.getElementById('actuals-block').classList.toggle('hidden', status === 'upcoming');
+}
+
+function openForm(flight) {
+  const form = document.getElementById('flight-form');
+  form.reset();
+  document.getElementById('f-origin').removeAttribute('data-iata');
+  document.getElementById('f-dest').removeAttribute('data-iata');
+  if (flight) {
+    document.getElementById('form-title').textContent = 'Edit Flight';
+    document.getElementById('f-id').value = flight.id;
+    document.getElementById('f-airline').value = flight.airline;
+    document.getElementById('f-flightnum').value = flight.flightNumber;
+    const o = AIRPORT_BY_IATA[flight.originIata], d = AIRPORT_BY_IATA[flight.destIata];
+    document.getElementById('f-origin').value = o ? `${o.iata} — ${o.city}, ${o.country}` : flight.originIata;
+    document.getElementById('f-origin').dataset.iata = flight.originIata;
+    document.getElementById('f-dest').value = d ? `${d.iata} — ${d.city}, ${d.country}` : flight.destIata;
+    document.getElementById('f-dest').dataset.iata = flight.destIata;
+    document.getElementById('f-sched-dep').value = flight.schedDep;
+    document.getElementById('f-sched-arr').value = flight.schedArr;
+    document.getElementById('f-status').value = flight.status;
+    document.getElementById('f-actual-dep').value = flight.actualDep || '';
+    document.getElementById('f-actual-arr').value = flight.actualArr || '';
+    document.getElementById('f-reason').value = flight.delayReason || '';
+    document.getElementById('f-notes').value = flight.notes || '';
+  } else {
+    document.getElementById('form-title').textContent = 'Add Flight';
+    document.getElementById('f-id').value = '';
+    document.getElementById('f-status').value = 'upcoming';
+  }
+  updateActualsVisibility();
+  goToScreen('form');
+}
+
+document.getElementById('flight-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const originIata = document.getElementById('f-origin').dataset.iata;
+  const destIata = document.getElementById('f-dest').dataset.iata;
+  if (!originIata || !AIRPORT_BY_IATA[originIata]) { toast('Pick an origin airport from the list'); return; }
+  if (!destIata || !AIRPORT_BY_IATA[destIata]) { toast('Pick a destination airport from the list'); return; }
+
+  const id = document.getElementById('f-id').value || uid();
+  const flight = {
+    id,
+    airline: document.getElementById('f-airline').value.trim(),
+    flightNumber: document.getElementById('f-flightnum').value.trim(),
+    originIata, destIata,
+    schedDep: document.getElementById('f-sched-dep').value,
+    schedArr: document.getElementById('f-sched-arr').value,
+    status: document.getElementById('f-status').value,
+    actualDep: document.getElementById('f-actual-dep').value,
+    actualArr: document.getElementById('f-actual-arr').value,
+    delayReason: document.getElementById('f-reason').value,
+    notes: document.getElementById('f-notes').value.trim(),
+  };
+  const idx = state.flights.findIndex(f => f.id === id);
+  if (idx >= 0) state.flights[idx] = flight; else state.flights.push(flight);
+  saveState();
+  toast('Flight saved');
+  renderFlightList();
+  goToScreen('list');
+});
+
+/* ============================================================
+   FLIGHT LIST
+   ============================================================ */
+let currentFilter = 'upcoming';
+document.querySelectorAll('#filter-tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#filter-tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderFlightList();
+  });
+});
+
+function renderFlightList() {
+  const container = document.getElementById('flight-list');
+  const now = new Date();
+  let flights = [...state.flights];
+  if (currentFilter === 'upcoming') {
+    flights = flights.filter(f => f.status === 'upcoming' || new Date(f.schedDep) >= now);
+    flights.sort((a,b) => new Date(a.schedDep) - new Date(b.schedDep));
+  } else if (currentFilter === 'past') {
+    flights = flights.filter(f => f.status !== 'upcoming' && new Date(f.schedDep) < now);
+    flights.sort((a,b) => new Date(b.schedDep) - new Date(a.schedDep));
+  } else {
+    flights.sort((a,b) => new Date(b.schedDep) - new Date(a.schedDep));
+  }
+
+  if (!flights.length) {
+    container.innerHTML = `<div class="empty-state"><div class="big">🧳</div>
+      <p>No flights here yet.</p>
+      <p class="muted">Tap the + button to log a flight.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = flights.map(f => {
+    const o = AIRPORT_BY_IATA[f.originIata], d = AIRPORT_BY_IATA[f.destIata];
+    const depDelay = diffMinutes(f.schedDep, f.actualDep);
+    let badge;
+    if (f.status === 'cancelled') badge = `<span class="badge badge-cancelled">Cancelled</span>`;
+    else if (f.status === 'upcoming') badge = `<span class="badge badge-upcoming">Upcoming</span>`;
+    else badge = `<span class="badge ${delayBadgeClass(depDelay)}">${depDelay===null ? 'Landed' : delayLabel(depDelay)}</span>`;
+    return `<div class="flight-card status-${f.status}" data-id="${f.id}">
+      <div class="fc-top">
+        <span class="fc-num">${f.airline} ${f.flightNumber}</span>
+        <span class="fc-date">${fmtDT(f.schedDep)}</span>
+      </div>
+      <div class="fc-route">${f.originIata}<span class="arrow">→</span>${f.destIata}</div>
+      <div class="fc-sub">
+        <span>${o ? o.city : ''} → ${d ? d.city : ''}</span>
+        ${badge}
+      </div>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('.flight-card').forEach(card => {
+    card.addEventListener('click', () => openDetail(card.dataset.id));
+  });
+}
+
+/* ============================================================
+   FLIGHT DETAIL
+   ============================================================ */
+document.getElementById('btn-back-detail').addEventListener('click', () => goToScreen('list'));
+
+async function openDetail(id) {
+  const flight = state.flights.find(f => f.id === id);
+  if (!flight) return;
+  goToScreen('detail');
+  renderDetail(flight, null, null);
+
+  const o = AIRPORT_BY_IATA[flight.originIata], d = AIRPORT_BY_IATA[flight.destIata];
+  const [depDate, depTime] = flight.schedDep.split('T');
+  const [arrDate, arrTime] = flight.schedArr.split('T');
+  const [wOrigin, wDest] = await Promise.all([
+    fetchWeatherAt(o, depDate, depTime),
+    fetchWeatherAt(d, arrDate, arrTime),
+  ]);
+  renderDetail(flight, wOrigin, wDest);
+}
+
+function weatherCardHTML(airport, w, label) {
+  if (!w) return `<div class="weather-row"><div class="w-icon">⏳</div><div class="w-detail">Loading ${label.toLowerCase()} weather…</div></div>`;
+  if (w.unavailable) return `<div class="weather-row"><div class="w-icon">🔭</div><div class="w-detail"><span class="w-desc">Forecast not available yet</span><div class="muted">${w.reason}</div></div></div>`;
+  if (w.error) return `<div class="weather-row"><div class="w-icon">⚠️</div><div class="w-detail">${w.reason}</div></div>`;
+  const [desc, icon] = weatherInfo(w.code);
+  const risk = riskFromWeather(w);
+  const reasonText = riskReasonText(w);
+  return `<div class="weather-row">
+      <div class="w-icon">${icon}</div>
+      <div class="w-detail">
+        <span class="w-desc">${desc}, ${Math.round(w.temp)}°F</span>
+        <div class="muted">Wind ${Math.round(w.wind)} mph${w.gust ? ' (gusts '+Math.round(w.gust)+')' : ''} · ${label} local time ${fmtTime(w.time)}</div>
+      </div>
+      <span class="risk-pill risk-${risk}">${risk} risk</span>
+    </div>
+    ${risk !== 'low' ? `<div class="note-tip">⚠️ Possible delay factor at ${label.toLowerCase()}: ${reasonText || desc.toLowerCase()}.</div>` : ''}`;
+}
+
+function renderDetail(flight, wOrigin, wDest) {
+  const o = AIRPORT_BY_IATA[flight.originIata], d = AIRPORT_BY_IATA[flight.destIata];
+  const depDelay = diffMinutes(flight.schedDep, flight.actualDep);
+  const arrDelay = diffMinutes(flight.schedArr, flight.actualArr);
+
+  const noteO = AIRPORT_NOTES[flight.originIata];
+  const noteD = AIRPORT_NOTES[flight.destIata];
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="card">
+      <div class="fc-top">
+        <h2 style="margin:0;">${flight.airline} ${flight.flightNumber}</h2>
+        <span class="badge ${flight.status==='cancelled'?'badge-cancelled':flight.status==='upcoming'?'badge-upcoming':delayBadgeClass(depDelay)}">
+          ${flight.status==='cancelled' ? 'Cancelled' : flight.status==='upcoming' ? 'Upcoming' : (depDelay===null?'Landed':delayLabel(depDelay))}
+        </span>
+      </div>
+      <div class="timeline">
+        <div class="tl-point">
+          <div class="tl-code">${flight.originIata}</div>
+          <div class="tl-time">${fmtDT(flight.schedDep)}</div>
+          ${flight.actualDep ? `<div class="delay-line ${depDelay>15?'late':'ontime'}">${delayLabel(depDelay)}</div>` : ''}
+        </div>
+        <div class="tl-line"></div>
+        <div class="tl-point">
+          <div class="tl-code">${flight.destIata}</div>
+          <div class="tl-time">${fmtDT(flight.schedArr)}</div>
+          ${flight.actualArr ? `<div class="delay-line ${arrDelay>15?'late':'ontime'}">${delayLabel(arrDelay)}</div>` : ''}
+        </div>
+      </div>
+      ${flight.delayReason ? `<div class="note-tip">Logged reason: <strong>${REASON_LABELS[flight.delayReason]}</strong></div>` : ''}
+      ${flight.notes ? `<p class="muted" style="margin-top:0.7rem;">📝 ${flight.notes}</p>` : ''}
+      <div class="form-actions">
+        <button class="btn btn-secondary" id="btn-edit-flight">Edit</button>
+        <button class="btn btn-danger" id="btn-delete-flight">Delete</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🛫 Origin — ${o ? o.city : flight.originIata}</h2>
+      <div class="airport-block">
+        <div>
+          <div class="ab-name">${o ? o.name : ''}</div>
+          <div class="ab-loc">${o ? o.city + ', ' + o.country : ''}</div>
+        </div>
+        <div class="ab-code">${flight.originIata}</div>
+      </div>
+      ${weatherCardHTML(o, wOrigin, 'Origin')}
+      ${noteO ? `<div class="note-tip">ℹ️ ${noteO}</div>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>🛬 Destination — ${d ? d.city : flight.destIata}</h2>
+      <div class="airport-block">
+        <div>
+          <div class="ab-name">${d ? d.name : ''}</div>
+          <div class="ab-loc">${d ? d.city + ', ' + d.country : ''}</div>
+        </div>
+        <div class="ab-code">${flight.destIata}</div>
+      </div>
+      ${weatherCardHTML(d, wDest, 'Destination')}
+      ${noteD ? `<div class="note-tip">ℹ️ ${noteD}</div>` : ''}
+    </div>
+  `;
+
+  document.getElementById('btn-edit-flight').addEventListener('click', () => openForm(flight));
+  document.getElementById('btn-delete-flight').addEventListener('click', () => {
+    if (confirm('Delete this flight?')) {
+      state.flights = state.flights.filter(f => f.id !== flight.id);
+      saveState();
+      toast('Flight deleted');
+      renderFlightList();
+      goToScreen('list');
+    }
+  });
+}
+
+/* ============================================================
+   AIRPORT LOOKUP (standalone section)
+   ============================================================ */
+async function renderAirportLookup(a) {
+  const container = document.getElementById('airport-lookup-result');
+  container.innerHTML = `
+    <div class="card">
+      <div class="airport-block">
+        <div>
+          <div class="ab-name">${a.name}</div>
+          <div class="ab-loc">${a.city}, ${a.country}</div>
+          <div class="muted" style="margin-top:0.3rem;">${a.lat.toFixed(3)}, ${a.lon.toFixed(3)} · ${a.tz}</div>
+        </div>
+        <div class="ab-code">${a.iata}</div>
+      </div>
+      <div id="airport-lookup-weather">${weatherCardHTML(a, null, 'Current')}</div>
+      ${AIRPORT_NOTES[a.iata] ? `<div class="note-tip">ℹ️ ${AIRPORT_NOTES[a.iata]}</div>` : ''}
+    </div>`;
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0,10);
+  const timeStr = now.toTimeString().slice(0,5);
+  const w = await fetchWeatherAt(a, dateStr, timeStr);
+  document.getElementById('airport-lookup-weather').innerHTML = weatherCardHTML(a, w, 'Current');
+}
+
+/* ============================================================
+   STATS
+   ============================================================ */
+function renderStats() {
+  const container = document.getElementById('stats-content');
+  const completed = state.flights.filter(f => f.status === 'landed' && f.actualDep);
+  const cancelled = state.flights.filter(f => f.status === 'cancelled').length;
+
+  if (!state.flights.length) {
+    container.innerHTML = `<div class="empty-state"><div class="big">📊</div><p>No flights logged yet.</p></div>`;
+    return;
+  }
+
+  const depDelays = completed.map(f => diffMinutes(f.schedDep, f.actualDep)).filter(v => v !== null);
+  const avgDelay = depDelays.length ? Math.round(depDelays.reduce((a,b)=>a+b,0)/depDelays.length) : 0;
+  const onTimeCount = depDelays.filter(v => v <= 15).length;
+  const onTimeRate = depDelays.length ? Math.round(100 * onTimeCount / depDelays.length) : 0;
+
+  const reasonCounts = {};
+  state.flights.forEach(f => { if (f.delayReason) reasonCounts[f.delayReason] = (reasonCounts[f.delayReason]||0) + 1; });
+
+  container.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-tile"><div class="st-val">${state.flights.length}</div><div class="st-label">Flights logged</div></div>
+      <div class="stat-tile"><div class="st-val">${onTimeRate}%</div><div class="st-label">On-time rate</div></div>
+      <div class="stat-tile"><div class="st-val">${avgDelay}m</div><div class="st-label">Avg. delay</div></div>
+    </div>
+    <div class="card">
+      <h2>Departure delay by flight</h2>
+      <div id="chart-delays"></div>
+      ${!completed.length ? '<p class="muted">Log actual departure times on your flights to see this chart.</p>' : ''}
+    </div>
+    <div class="card">
+      <h2>Delay reasons logged</h2>
+      <div id="chart-reasons"></div>
+      ${!Object.keys(reasonCounts).length ? '<p class="muted">No delay reasons logged yet.</p>' : ''}
+      <p class="muted" style="margin-top:${cancelled? '0.6rem':'0'};">${cancelled ? cancelled + ' cancelled flight(s) logged.' : ''}</p>
+    </div>
+  `;
+
+  if (typeof d3 === 'undefined') {
+    if (completed.length) document.getElementById('chart-delays').innerHTML = '<p class="muted">Chart library failed to load — check your connection and reload.</p>';
+    if (Object.keys(reasonCounts).length) document.getElementById('chart-reasons').innerHTML = '<p class="muted">Chart library failed to load — check your connection and reload.</p>';
+    return;
+  }
+  if (completed.length) drawDelayChart(completed);
+  if (Object.keys(reasonCounts).length) drawReasonChart(reasonCounts);
+}
+
+function drawDelayChart(completed) {
+  const data = completed
+    .slice().sort((a,b) => new Date(a.schedDep) - new Date(b.schedDep))
+    .map(f => ({ label: `${f.originIata}-${f.destIata}`, value: diffMinutes(f.schedDep, f.actualDep) }));
+  const el = document.getElementById('chart-delays');
+  el.innerHTML = '';
+  const width = Math.max(el.clientWidth, data.length * 50);
+  const height = 160, margin = {top:10,right:10,bottom:30,left:10};
+  const svg = d3.select(el).append('svg').attr('width', width).attr('height', height);
+  const x = d3.scaleBand().domain(data.map((d,i)=>i)).range([margin.left, width-margin.right]).padding(0.35);
+  const maxAbs = Math.max(15, d3.max(data, d => Math.abs(d.value)));
+  const y = d3.scaleLinear().domain([-maxAbs, maxAbs]).range([height-margin.bottom, margin.top]);
+  const zeroY = y(0);
+  svg.selectAll('rect').data(data).enter().append('rect')
+    .attr('x', (d,i) => x(i))
+    .attr('width', x.bandwidth())
+    .attr('y', d => d.value >= 0 ? y(d.value) : zeroY)
+    .attr('height', d => Math.abs(y(d.value) - zeroY))
+    .attr('fill', d => d.value > 60 ? '#d4523f' : d.value > 15 ? '#f0a828' : '#2fa885')
+    .attr('rx', 3);
+  svg.selectAll('.bar-label').data(data).enter().append('text')
+    .attr('class', 'bar-label')
+    .attr('x', (d,i) => x(i) + x.bandwidth()/2)
+    .attr('y', height - margin.bottom + 14)
+    .attr('text-anchor', 'middle')
+    .text(d => d.label);
+  svg.selectAll('.bar-value').data(data).enter().append('text')
+    .attr('class', 'bar-value')
+    .attr('x', (d,i) => x(i) + x.bandwidth()/2)
+    .attr('y', d => (d.value >= 0 ? y(d.value) - 4 : zeroY + 12))
+    .attr('text-anchor', 'middle')
+    .text(d => d.value);
+}
+
+function drawReasonChart(reasonCounts) {
+  const data = Object.entries(reasonCounts).map(([k,v]) => ({ label: REASON_LABELS[k], value: v }));
+  const el = document.getElementById('chart-reasons');
+  el.innerHTML = '';
+  const width = Math.max(el.clientWidth, 300), barH = 28, height = data.length * (barH + 10) + 10;
+  const svg = d3.select(el).append('svg').attr('width', width).attr('height', height);
+  const max = d3.max(data, d => d.value);
+  const x = d3.scaleLinear().domain([0, max]).range([110, width - 30]);
+  const rows = svg.selectAll('g').data(data).enter().append('g')
+    .attr('transform', (d,i) => `translate(0, ${i*(barH+10)+5})`);
+  rows.append('text').attr('x', 0).attr('y', barH/2).attr('dy','0.35em')
+    .attr('class','bar-label').text(d => d.label);
+  rows.append('rect').attr('x', 110).attr('y', 0).attr('height', barH)
+    .attr('width', d => x(d.value) - 110).attr('fill', '#0f6bad').attr('rx', 4);
+  rows.append('text').attr('x', d => x(d.value) + 6).attr('y', barH/2).attr('dy','0.35em')
+    .attr('class', 'bar-value').text(d => d.value);
+}
+
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+document.getElementById('btn-export').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `flight-tracker-export-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('btn-import').addEventListener('click', () => document.getElementById('import-file').click());
+document.getElementById('import-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const imported = JSON.parse(reader.result);
+      if (!imported.flights || !Array.isArray(imported.flights)) throw new Error('bad format');
+      state = imported;
+      saveState();
+      renderFlightList();
+      toast('Import complete');
+    } catch (err) {
+      toast('Could not import — invalid file');
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+document.getElementById('btn-clear').addEventListener('click', () => {
+  if (confirm('This will permanently delete all logged flights. Continue?')) {
+    state = { flights: [] };
+    saveState();
+    renderFlightList();
+    toast('All data cleared');
+  }
+});
+document.getElementById('btn-refresh-header').addEventListener('click', () => {
+  Object.keys(weatherCache).forEach(k => delete weatherCache[k]);
+  toast('Weather cache cleared — reopen a flight to refresh');
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+renderFlightList();
+</script>
+</body>
+</html>
