@@ -574,6 +574,32 @@ const AIRLINE_ICAO = {
   ET:"ETH", MS:"MSR", SA:"SAA", KQ:"KQA",
 };
 
+/* Free-text airline name -> IATA code, used as a fallback when the Flight # field has no carrier letters */
+const AIRLINE_NAME_TO_IATA = {
+  "american":"AA", "american airlines":"AA", "united":"UA", "united airlines":"UA",
+  "delta":"DL", "delta air lines":"DL", "southwest":"WN", "southwest airlines":"WN",
+  "jetblue":"B6", "jetblue airways":"B6", "alaska":"AS", "alaska airlines":"AS",
+  "spirit":"NK", "spirit airlines":"NK", "frontier":"F9", "frontier airlines":"F9",
+  "allegiant":"G4", "allegiant air":"G4", "hawaiian":"HA", "hawaiian airlines":"HA",
+  "british airways":"BA", "virgin atlantic":"VS", "lufthansa":"LH", "swiss":"LX",
+  "austrian":"OS", "austrian airlines":"OS", "brussels airlines":"SN", "air france":"AF",
+  "klm":"KL", "iberia":"IB", "air europa":"UX", "tap":"TP", "tap air portugal":"TP",
+  "ita airways":"AZ", "lot":"LO", "lot polish airlines":"LO", "sas":"SK",
+  "finnair":"AY", "aer lingus":"EI", "turkish airlines":"TK", "el al":"LY",
+  "ryanair":"FR", "easyjet":"U2",
+  "emirates":"EK", "etihad":"EY", "etihad airways":"EY", "qatar airways":"QR",
+  "saudia":"SV", "gulf air":"GF", "oman air":"WY",
+  "singapore airlines":"SQ", "cathay pacific":"CX", "japan airlines":"JL", "ana":"NH",
+  "all nippon airways":"NH", "korean air":"KE", "asiana":"OZ", "asiana airlines":"OZ",
+  "air china":"CA", "china eastern":"MU", "china southern":"CZ", "thai airways":"TG",
+  "malaysia airlines":"MH", "garuda indonesia":"GA", "air india":"AI",
+  "vietnam airlines":"VN", "philippine airlines":"PR",
+  "qantas":"QF", "virgin australia":"VA", "air new zealand":"NZ", "jetstar":"JQ",
+  "air canada":"AC", "westjet":"WS",
+  "aeromexico":"AM", "avianca":"AV", "latam":"LA", "gol":"G3", "azul":"AD", "copa airlines":"CM",
+  "ethiopian airlines":"ET", "egyptair":"MS", "south african airways":"SA", "kenya airways":"KQ",
+};
+
 /* App settings (live-status provider config), separate from flight data */
 const DEFAULT_SETTINGS = { lsProvider: "", lsApiKey: "", lsBaseUrl: "" };
 
@@ -732,10 +758,21 @@ function riskReasonText(w) {
    — full status via an optional user-configured AviationStack-
      compatible provider (Settings tab)
    ============================================================ */
-function parseFlightNumber(flightNumberRaw) {
-  const m = (flightNumberRaw || '').trim().toUpperCase().match(/^([A-Z0-9]{2,3})[\s-]*(\d{1,4}[A-Z]?)$/);
-  if (!m) return null;
-  return { carrier: m[1], number: m[2] };
+function resolveCarrierAndNumber(flight) {
+  const raw = (flight.flightNumber || '').trim().toUpperCase();
+  // IATA carrier codes are exactly 2 characters and always include at least one letter
+  // (e.g. DL, B6, 9E) — pin the length so a plain number like "851" (no space) can't
+  // get mis-split into carrier "85" + number "1" by a greedy match.
+  const withCarrier = raw.match(/^([A-Z0-9]{2})[\s-]*(\d{1,4}[A-Z]?)$/);
+  if (withCarrier && /[A-Z]/.test(withCarrier[1])) return { carrier: withCarrier[1], number: withCarrier[2] };
+
+  // Fall back: flight number is digits-only, so resolve the carrier from the Airline name field.
+  const numOnly = raw.match(/^(\d{1,4}[A-Z]?)$/);
+  if (numOnly) {
+    const code = AIRLINE_NAME_TO_IATA[(flight.airline || '').trim().toLowerCase()];
+    if (code) return { carrier: code, number: numOnly[1] };
+  }
+  return null;
 }
 
 let openSkyCache = { time: 0, states: null };
@@ -750,8 +787,8 @@ async function fetchOpenSkyStates() {
 }
 
 async function fetchLivePosition(flight) {
-  const parsed = parseFlightNumber(flight.flightNumber);
-  if (!parsed) return { error: true, reason: `Couldn't read an airline code + number from "${flight.flightNumber}".` };
+  const parsed = resolveCarrierAndNumber(flight);
+  if (!parsed) return { error: true, reason: `Couldn't figure out the airline code for "${flight.flightNumber}". Try including it in the Flight # field (e.g. "DL 851"), or use a recognized airline name.` };
   const icaoPrefix = AIRLINE_ICAO[parsed.carrier];
   if (!icaoPrefix) return { error: true, reason: `No ICAO callsign mapping for airline code "${parsed.carrier}" yet.` };
   const targetCallsign = (icaoPrefix + parsed.number).toUpperCase();
@@ -777,8 +814,8 @@ async function fetchLivePosition(flight) {
 async function fetchLiveStatus(flight) {
   const settings = state.settings;
   if (!settings.lsProvider) return { unconfigured: true };
-  const parsed = parseFlightNumber(flight.flightNumber);
-  if (!parsed) return { error: true, reason: `Couldn't read an airline code + number from "${flight.flightNumber}".` };
+  const parsed = resolveCarrierAndNumber(flight);
+  if (!parsed) return { error: true, reason: `Couldn't figure out the airline code for "${flight.flightNumber}". Try including it in the Flight # field (e.g. "DL 851"), or use a recognized airline name.` };
   const base = (settings.lsBaseUrl || 'https://api.aviationstack.com/v1/flights').replace(/\/$/, '');
   const params = new URLSearchParams({ access_key: settings.lsApiKey || '', flight_iata: parsed.carrier + parsed.number });
   try {
